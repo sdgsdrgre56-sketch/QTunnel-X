@@ -1,0 +1,15 @@
+[Unit]
+Description=QTunnel X encrypted UDP tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/qtunnelx-server serve -config /etc/qtunnelx/users.json -listen :46000 -tun qtx0
+ExecStartPost=/usr/local/lib/qtunnelx/net-up.sh
+ExecStopPost=/usr/local/lib/qtunnelx/net-down.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
