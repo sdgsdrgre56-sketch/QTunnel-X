@@ -43,6 +43,17 @@ public class MainActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_GET_CONTENT).setType("video/*");
             startActivityForResult(i, PICK);
         }));
+        l.addView(btn("Отключить полностью", () -> {
+            sp.edit().putBoolean("on", false).apply();
+            sw.setChecked(false);
+            stopService(new Intent(this, WatchService.class));
+            Toast.makeText(this, "Отключено", Toast.LENGTH_SHORT).show();
+        }));
+        l.addView(btn("Удалить приложение", () -> {
+            sp.edit().putBoolean("on", false).apply();
+            stopService(new Intent(this, WatchService.class));
+            startActivity(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + getPackageName())));
+        }));
         l.addView(btn("Проверить сейчас", () -> startActivity(new Intent(this, PlayerActivity.class))));
         setContentView(l);
 

@@ -1,6 +1,7 @@
 package com.user.lockvideo;
 
 import android.app.Activity;
+import android.content.*;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.*;
@@ -9,6 +10,7 @@ import java.io.File;
 
 public class PlayerActivity extends Activity {
     private VideoView vv;
+    private BroadcastReceiver unlock;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -32,6 +34,15 @@ public class PlayerActivity extends Activity {
         vv.setOnErrorListener((m, w, e) -> { finish(); return true; });
         vv.setOnTouchListener((v, ev) -> { finish(); return true; });
         vv.start();
+        unlock = new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) { finish(); }
+        };
+        registerReceiver(unlock, new IntentFilter(Intent.ACTION_USER_PRESENT));
+    }
+
+    @Override protected void onDestroy() {
+        if (unlock != null) { unregisterReceiver(unlock); unlock = null; }
+        super.onDestroy();
     }
 
     private int R_RAW_DEFAULT() {
