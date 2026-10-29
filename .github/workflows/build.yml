@@ -2,6 +2,8 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,3 +18,10 @@ jobs:
         with:
           name: LockVideo-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk LockVideo.apk
+          gh release delete lockvideo-latest --yes --cleanup-tag || true
+          gh release create lockvideo-latest LockVideo.apk --target ${{ github.sha }} --title "LockVideo APK" --notes "Video with sound on screen wake"
