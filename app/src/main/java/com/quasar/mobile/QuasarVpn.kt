@@ -25,8 +25,8 @@ class QuasarVpn : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopAll(); stopSelf(); return START_NOT_STICKY }
         if (starting || running) return START_NOT_STICKY
-        val p = Store.load(this)
-        if (p == null) { Log.add("Нет профиля Sudoku"); stopSelf(); return START_NOT_STICKY }
+        val p = Store.selected(this)
+        if (p == null) { Log.add("Не выбран протокол"); stopSelf(); return START_NOT_STICKY }
         starting = true
         thread(name = "quasar-start") {
             try { start(p) } catch (e: Throwable) { Log.add("Ошибка запуска: ${e.message}"); stopAll(); stopSelf() }
@@ -35,16 +35,26 @@ class QuasarVpn : VpnService() {
         return START_NOT_STICKY
     }
 
-    private fun start(p: Profile) {
-        val dir = File(filesDir, "mihomo").apply { mkdirs() }
-        val cfg = File(dir, "config.yaml").apply { writeText(Cfg.mihomo(p, Store.ruDirect(this@QuasarVpn))) }
-        val exe = File(applicationInfo.nativeLibraryDir, "libmihomo.so")
-        if (!exe.exists()) throw IllegalStateException("в APK нет ядра mihomo (libmihomo.so)")
-        Log.add("Запускаю ядро mihomo → ${p.host}:${p.port}")
-        proc = ProcessBuilder(exe.absolutePath, "-d", dir.absolutePath, "-f", cfg.absolutePath)
-            .redirectErrorStream(true).start()
+    private fun start(p: org.json.JSONObject) {
+        val proto = p.getString("proto")
+        val core = Protos.core(proto) ?: throw IllegalStateException("Протокол «$proto» пока не поддерживается")
+        val ru = Store.ruDirect(this)
+        val dir = File(filesDir, core).apply { mkdirs() }
+        val args: List<String>
+        val exeName: String
+        if (core == "mihomo") {
+            val cfg = File(dir, "config.yaml").apply { writeText(Cfg.mihomo(p, ru)) }
+            exeName = "libmihomo.so"; args = listOf("-d", dir.absolutePath, "-f", cfg.absolutePath)
+        } else {
+            val cfg = File(dir, "config.json").apply { writeText(Cfg.singbox(p, ru)) }
+            exeName = "libsingbox.so"; args = listOf("run", "-c", cfg.absolutePath, "-D", dir.absolutePath)
+        }
+        val exe = File(applicationInfo.nativeLibraryDir, exeName)
+        if (!exe.exists()) throw IllegalStateException("в APK нет ядра $core ($exeName)")
+        Log.add("Запускаю ядро $core: ${Protos.title(p)}")
+        proc = ProcessBuilder(listOf(exe.absolutePath) + args).redirectErrorStream(true).apply { environment()["HOME"] = dir.absolutePath }.start()
         val pr = proc!!
-        thread(name = "mihomo-log") {
+        thread(name = "core-log") {
             try { pr.inputStream.bufferedReader().forEachLine { Log.add(it.take(300)) } } catch (_: Throwable) {}
         }
         // ждём, пока откроется локальный порт ядра
@@ -63,7 +73,7 @@ class QuasarVpn : VpnService() {
         val hevCfg = File(filesDir, "hev.yml").apply { writeText(Cfg.hev()) }
         TProxyService.TProxyStartService(hevCfg.absolutePath, t.fd)
         running = true
-        Log.add("Туннель включён (TUN). Весь трафик телефона идёт через Sudoku.")
+        Log.add("Туннель включён (TUN). Весь трафик телефона идёт через выбранный протокол.")
     }
 
     private fun stopAll() {

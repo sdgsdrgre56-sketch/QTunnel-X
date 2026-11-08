@@ -1,7 +1,7 @@
 # Квазар для Android (первая версия)
 
 То же, что на ПК: ядро mihomo даёт локальный SOCKS5, режим TUN (VpnService + hev-socks5-tunnel) гонит через него весь трафик телефона. Приложение исключено из VPN, петли нет.
-Протокол в этой версии: **Sudoku** (как у тебя на ПК, высокие порты). ПК-Квазар и серверы не тронуты.
+Протоколы: Sudoku (mihomo) и через sing-box: VLESS Reality, Hysteria2, TUIC, AnyTLS, Trojan, Shadowsocks, ShadowTLS, HTTP, SOCKS5. Ещё нет: XHTTP, Naive, ShadowQUIC, Juicity, Brook, Mieru, Restls, Snell, TLSMirror, Фотон, Antohin.
 
 ## Как собрать APK
 1. Создай на GitHub новый репозиторий (например `quasar-mobile`) и залей туда содержимое этой папки (ветка `main`).

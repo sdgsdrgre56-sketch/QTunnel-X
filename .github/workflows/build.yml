@@ -34,6 +34,20 @@ jobs:
           gunzip -c "$NAME" > app/src/main/jniLibs/arm64-v8a/libmihomo.so
           chmod +x app/src/main/jniLibs/arm64-v8a/libmihomo.so
 
+      # 3) Ядро sing-box (VLESS Reality, Hysteria2, TUIC, AnyTLS, Trojan, Shadowsocks, ShadowTLS, HTTP, SOCKS5). Берём ветку 1.11 — под неё написан конфиг.
+      - name: Download sing-box core
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          TAG=$(gh release list --repo SagerNet/sing-box --limit 60 --json tagName,isPrerelease --jq '[.[]|select(.isPrerelease==false)|.tagName|select(test("^v1\\.11\\.[0-9]+$"))][0]')
+          echo "sing-box tag: $TAG"
+          gh release view "$TAG" --repo SagerNet/sing-box --json assets --jq '.assets[].name' | grep android | tee sb-assets.txt
+          NAME=$(grep -E 'android-arm64\.tar\.gz$' sb-assets.txt | head -1)
+          echo "sing-box asset: $NAME"
+          gh release download "$TAG" --repo SagerNet/sing-box --pattern "$NAME" --dir .
+          mkdir sbx && tar -xzf "$NAME" -C sbx
+          cp "$(find sbx -type f -name sing-box | head -1)" app/src/main/jniLibs/arm64-v8a/libsingbox.so
+          chmod +x app/src/main/jniLibs/arm64-v8a/libsingbox.so
+
       - name: Build APK
         run: gradle :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
