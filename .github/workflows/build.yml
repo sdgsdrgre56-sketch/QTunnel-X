@@ -13,8 +13,12 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: "8.9" }
+      # Gradle берём с GitHub (services.gradle.org иногда отвечает 504)
+      - name: Install Gradle 8.9
+        run: |
+          gh release download v8.9.0 --repo gradle/gradle-distributions --pattern 'gradle-8.9-bin.zip' --dir /tmp
+          sudo unzip -q /tmp/gradle-8.9-bin.zip -d /opt
+          echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
 
       # 1) Туннель TUN → SOCKS5 (hev-socks5-tunnel)
       - name: Build hev-socks5-tunnel
