@@ -9,7 +9,7 @@ fetch() {  # репозиторий  регулярка-имени-файла  �
   local tmp; tmp=$(mktemp -d); mkdir "$tmp/x"
   gh release download --repo "$repo" --pattern "$name" --dir "$tmp" || { echo "ПРОПУЩЕНО $out: не скачался $name"; return 0; }
   case "$name" in
-    *.zip) unzip -q "$tmp/$name" -d "$tmp/x" ;;
+    *.zip|*.apk) unzip -q "$tmp/$name" -d "$tmp/x" ;;
     *.tar.gz|*.tgz) tar -xzf "$tmp/$name" -C "$tmp/x" ;;
     *.tar.xz) tar -xJf "$tmp/$name" -C "$tmp/x" ;;
     *.gz) gunzip -c "$tmp/$name" > "$tmp/x/$bin" ;;
@@ -22,7 +22,7 @@ fetch() {  # репозиторий  регулярка-имени-файла  �
 fetch SagerNet/sing-box          'android-arm64\.tar\.gz$'                              sing-box        singbox
 fetch MetaCubeX/mihomo           '^mihomo-android-arm64(-v8)?-v[0-9.]+\.gz$'            mihomo          mihomo
 fetch XTLS/Xray-core             '^Xray-android-arm64-v8a\.zip$'                        xray            xray
-fetch klzgrad/naiveproxy         'android.*arm64.*\.tar\.xz$'                           naive           naive
+fetch klzgrad/naiveproxy         '^naiveproxy-plugin-.*-arm64-v8a\.apk$'               libnaive.so     naive
 fetch txthinking/brook           '^brook_linux_arm64$'                                  brook           brook
 fetch Diniboy1123/usque          'android.*arm64.*\.zip$'                               usque           usque
 fetch spongebob888/shadowquic    'aarch64.*(android|linux)|android.*(aarch64|arm64)'    shadowquic      shadowquic
