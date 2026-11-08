@@ -6,14 +6,17 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env: { GH_TOKEN: "${{ github.token }}" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
 
-      # 1) Туннель TUN → SOCKS5 (hev-socks5-tunnel), нативная библиотека
+      # 1) Туннель TUN → SOCKS5 (hev-socks5-tunnel)
       - name: Build hev-socks5-tunnel
         run: |
           git clone --recursive --depth 1 https://github.com/heiher/hev-socks5-tunnel app/src/main/jni/hev-socks5-tunnel
@@ -22,31 +25,31 @@ jobs:
           "$NDK/ndk-build" NDK_PROJECT_PATH=app/src/main APP_BUILD_SCRIPT=app/src/main/jni/Android.mk NDK_APPLICATION_MK=app/src/main/jni/Application.mk NDK_LIBS_OUT=app/src/main/jniLibs
           ls -la app/src/main/jniLibs/arm64-v8a
 
-      # 2) Ядро mihomo (там живёт Sudoku), официальный релиз под Android arm64
-      - name: Download mihomo core
-        env: { GH_TOKEN: "${{ github.token }}" }
+      # 2) Node.js для Android (nodejs-mobile): на нём работает сам Квазар
+      - name: Fetch nodejs-mobile
         run: |
-          gh api repos/MetaCubeX/mihomo/releases/latest --jq '.assets[].name' | tee assets.txt
-          NAME=$(grep -E '^mihomo-android-arm64(-v8)?-v[0-9.]+\.gz$' assets.txt | head -1)
-          [ -n "$NAME" ] || NAME=$(grep -E '^mihomo-android-arm64.*\.gz$' assets.txt | grep -vE 'cgo|alpha' | head -1)
-          echo "mihomo asset: $NAME"
-          gh release download --repo MetaCubeX/mihomo --pattern "$NAME" --dir .
-          gunzip -c "$NAME" > app/src/main/jniLibs/arm64-v8a/libmihomo.so
-          chmod +x app/src/main/jniLibs/arm64-v8a/libmihomo.so
+          gh release list --repo nodejs-mobile/nodejs-mobile --limit 5
+          gh release download --repo nodejs-mobile/nodejs-mobile --pattern 'nodejs-mobile-v*-android.zip' --dir .
+          mkdir nm && unzip -q nodejs-mobile-v*-android.zip -d nm
+          find nm -maxdepth 3 | head -30
+          mkdir -p app/libnode/bin
+          cp -r nm/bin/arm64-v8a app/libnode/bin/arm64-v8a
+          cp -r nm/include app/libnode/include
+          ls app/libnode/include/node | head -3
 
-      # 3) Ядро sing-box (VLESS Reality, Hysteria2, TUIC, AnyTLS, Trojan, Shadowsocks, ShadowTLS, HTTP, SOCKS5). Берём ветку 1.11 — под неё написан конфиг.
-      - name: Download sing-box core
-        env: { GH_TOKEN: "${{ github.token }}" }
+      # 3) Код Квазара (как на ПК) + ssh2 внутрь APK
+      - name: Pack Quasar into assets
         run: |
-          TAG=$(gh release list --repo SagerNet/sing-box --limit 60 --json tagName,isPrerelease --jq '[.[]|select(.isPrerelease==false)|.tagName|select(test("^v1\\.11\\.[0-9]+$"))][0]')
-          echo "sing-box tag: $TAG"
-          gh release view "$TAG" --repo SagerNet/sing-box --json assets --jq '.assets[].name' | grep android | tee sb-assets.txt
-          NAME=$(grep -E 'android-arm64\.tar\.gz$' sb-assets.txt | head -1)
-          echo "sing-box asset: $NAME"
-          gh release download "$TAG" --repo SagerNet/sing-box --pattern "$NAME" --dir .
-          mkdir sbx && tar -xzf "$NAME" -C sbx
-          cp "$(find sbx -type f -name sing-box | head -1)" app/src/main/jniLibs/arm64-v8a/libsingbox.so
-          chmod +x app/src/main/jniLibs/arm64-v8a/libsingbox.so
+          mkdir -p app/src/main/assets
+          cp -r nodejs-project app/src/main/assets/nodejs-project
+          cd app/src/main/assets/nodejs-project
+          npm install --omit=dev --no-audit --no-fund
+          find . -name '*.node' -delete
+          du -sh .
+
+      # 4) Ядра протоколов
+      - name: Fetch cores
+        run: ./tools/fetch-cores.sh
 
       - name: Build APK
         run: gradle :app:assembleDebug --no-daemon

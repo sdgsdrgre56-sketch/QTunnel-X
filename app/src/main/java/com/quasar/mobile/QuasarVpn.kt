@@ -4,87 +4,70 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import java.io.File
-import java.net.InetSocketAddress
-import java.net.Socket
-import kotlin.concurrent.thread
 
 /**
- * Та же схема, что у Квазара на ПК: ядро (mihomo) даёт локальный SOCKS5, а режим TUN поднимает туннель к нему.
- * Само приложение исключено из VPN, поэтому исходящие соединения ядра идут мимо туннеля и петли нет.
+ * TUN-режим: весь трафик телефона идёт в локальный порт ядра Квазара (sing-box) через hev-socks5-tunnel.
+ * Само приложение исключено из VPN, поэтому ядра ходят в сеть напрямую, петли нет.
  */
 class QuasarVpn : VpnService() {
     companion object {
-        const val ACTION_STOP = "com.quasar.mobile.STOP"
+        const val ACTION_START = "com.quasar.mobile.TUN_START"
+        const val ACTION_STOP = "com.quasar.mobile.TUN_STOP"
         @Volatile var running = false
     }
-
     private var tun: ParcelFileDescriptor? = null
-    private var proc: Process? = null
-    @Volatile private var starting = false
+    private var port = 0
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) { stopAll(); stopSelf(); return START_NOT_STICKY }
-        if (starting || running) return START_NOT_STICKY
-        val p = Store.selected(this)
-        if (p == null) { Log.add("Не выбран протокол"); stopSelf(); return START_NOT_STICKY }
-        starting = true
-        thread(name = "quasar-start") {
-            try { start(p) } catch (e: Throwable) { Log.add("Ошибка запуска: ${e.message}"); stopAll(); stopSelf() }
-            starting = false
+        when (intent?.action) {
+            ACTION_START -> startTun(intent.getIntExtra("port", 10808))
+            else -> stopTun()
         }
         return START_NOT_STICKY
     }
 
-    private fun start(p: org.json.JSONObject) {
-        val proto = p.getString("proto")
-        val core = Protos.core(proto) ?: throw IllegalStateException("Протокол «$proto» пока не поддерживается")
-        val ru = Store.ruDirect(this)
-        val dir = File(filesDir, core).apply { mkdirs() }
-        val args: List<String>
-        val exeName: String
-        if (core == "mihomo") {
-            val cfg = File(dir, "config.yaml").apply { writeText(Cfg.mihomo(p, ru)) }
-            exeName = "libmihomo.so"; args = listOf("-d", dir.absolutePath, "-f", cfg.absolutePath)
-        } else {
-            val cfg = File(dir, "config.json").apply { writeText(Cfg.singbox(p, ru)) }
-            exeName = "libsingbox.so"; args = listOf("run", "-c", cfg.absolutePath, "-D", dir.absolutePath)
+    @Synchronized private fun startTun(p: Int) {
+        if (running && port == p) return
+        stopTun()
+        try {
+            val b = Builder().setSession("Квазар").setMtu(8500)
+                .addAddress("198.18.0.1", 32).addRoute("0.0.0.0", 0).addDnsServer("198.18.0.2")
+            b.addDisallowedApplication(packageName)
+            val t = b.establish() ?: return
+            tun = t; port = p
+            val cfg = File(filesDir, "hev.yml").apply { writeText(hev(p)) }
+            TProxyService.TProxyStartService(cfg.absolutePath, t.fd)
+            running = true
+        } catch (e: Throwable) {
+            File(filesDir, "data/vpn-error.txt").apply { parentFile?.mkdirs() }.writeText(e.toString())
+            stopTun()
         }
-        val exe = File(applicationInfo.nativeLibraryDir, exeName)
-        if (!exe.exists()) throw IllegalStateException("в APK нет ядра $core ($exeName)")
-        Log.add("Запускаю ядро $core: ${Protos.title(p)}")
-        proc = ProcessBuilder(listOf(exe.absolutePath) + args).redirectErrorStream(true).apply { environment()["HOME"] = dir.absolutePath }.start()
-        val pr = proc!!
-        thread(name = "core-log") {
-            try { pr.inputStream.bufferedReader().forEachLine { Log.add(it.take(300)) } } catch (_: Throwable) {}
-        }
-        // ждём, пока откроется локальный порт ядра
-        var ok = false
-        for (i in 0 until 40) {
-            if (!pr.isAlive) throw IllegalStateException("ядро сразу закрылось (код ${pr.exitValue()}), смотри журнал выше")
-            try { Socket().use { it.connect(InetSocketAddress("127.0.0.1", Cfg.SOCKS_PORT), 200) }; ok = true; break } catch (_: Throwable) { Thread.sleep(250) }
-        }
-        if (!ok) throw IllegalStateException("ядро не открыло порт ${Cfg.SOCKS_PORT}")
-
-        val b = Builder().setSession("Квазар").setMtu(8500)
-            .addAddress("198.18.0.1", 32).addRoute("0.0.0.0", 0).addDnsServer("198.18.0.2")
-        b.addDisallowedApplication(packageName)
-        val t = b.establish() ?: throw IllegalStateException("Android не создал VPN (нет разрешения?)")
-        tun = t
-        val hevCfg = File(filesDir, "hev.yml").apply { writeText(Cfg.hev()) }
-        TProxyService.TProxyStartService(hevCfg.absolutePath, t.fd)
-        running = true
-        Log.add("Туннель включён (TUN). Весь трафик телефона идёт через выбранный протокол.")
     }
 
-    private fun stopAll() {
-        running = false
-        try { TProxyService.TProxyStopService() } catch (_: Throwable) {}
+    @Synchronized private fun stopTun() {
+        if (tun != null) { try { TProxyService.TProxyStopService() } catch (_: Throwable) {} }
         try { tun?.close() } catch (_: Throwable) {}
-        tun = null
-        proc?.destroy(); proc = null
-        Log.add("Отключено")
+        tun = null; running = false
     }
 
-    override fun onRevoke() { stopAll(); super.onRevoke() }
-    override fun onDestroy() { stopAll(); super.onDestroy() }
+    override fun onRevoke() { stopTun(); super.onRevoke() }
+    override fun onDestroy() { stopTun(); super.onDestroy() }
+
+    private fun hev(p: Int) = """
+tunnel:
+  mtu: 8500
+  ipv4: 198.18.0.1
+socks5:
+  port: $p
+  address: 127.0.0.1
+  udp: 'udp'
+mapdns:
+  address: 198.18.0.2
+  port: 53
+  network: 100.64.0.0
+  netmask: 255.192.0.0
+  cache-size: 10000
+misc:
+  log-level: warn
+""".trimStart()
 }

@@ -9,11 +9,14 @@ android {
         applicationId = "com.quasar.mobile"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         ndk { abiFilters += listOf("arm64-v8a") }
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
     }
-    // Ядра (mihomo) лежат как libmihomo.so и запускаются как программы: их нужно распаковывать на диск
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+    sourceSets["main"].jniLibs.srcDir("libnode/bin")   // libnode.so (nodejs-mobile) кладёт сборка
+    // Ядра лежат как libXXX.so и запускаются как программы: их нужно распаковывать на диск
     packaging { jniLibs { useLegacyPackaging = true } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
