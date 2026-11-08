@@ -26,7 +26,12 @@ class MainActivity : Activity() {
             useWideViewPort = true; loadWithOverviewMode = true
             setSupportZoom(true); builtInZoomControls = true; displayZoomControls = false
         }
-        web.webViewClient = WebViewClient()
+        web.webViewClient = object : WebViewClient() {
+            // Windows-функции, которых на Android нет, прячем: «Раздача» и «Системный прокси»
+            override fun onPageFinished(v: WebView, url: String?) {
+                v.evaluateJavascript(HIDE_JS, null)
+            }
+        }
         web.webChromeClient = WebChromeClient()
         setContentView(web)
         web.loadData("<html><body style='background:#111;color:#ddd;font:18px sans-serif;padding:24px'>Квазар запускается…</body></html>", "text/html", "utf-8")
@@ -63,4 +68,13 @@ class MainActivity : Activity() {
         if (code == KeyEvent.KEYCODE_BACK) { if (web.canGoBack()) web.goBack() else moveTaskToBack(true); return true }
         return super.onKeyDown(code, e)
     }
+
+    private val HIDE_JS = """
+(function(){ if (window.__qh) return; window.__qh = 1;
+  function hide(){
+    document.querySelectorAll('#nav button').forEach(function(b){ if (b.textContent.trim()==='Раздача') b.style.display='none'; });
+    document.querySelectorAll('label, .check, .tick').forEach(function(l){ if (/Системный прокси/.test(l.textContent) && l.textContent.length<40) l.style.display='none'; });
+  }
+  new MutationObserver(hide).observe(document.body,{childList:true,subtree:true}); hide();
+})();"""
 }
