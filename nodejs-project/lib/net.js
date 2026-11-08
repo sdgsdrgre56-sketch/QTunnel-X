@@ -54,10 +54,20 @@ function connectViaProxy(proxyPort, host, port, { timeout = 8000, auth } = {}) {
   });
 }
 
+// Время до ответа цели через прокси. Открылось — ответ есть; «отказ» (RST/недоступно) тоже ответ: время такое же, как до цели.
+// Молчание (пакеты отбрасываются) — ответа нет. Возвращает { ms, kind: 'open' | 'refused' } или null.
+async function probeVia(proxyPort, host, port, { timeout = 2500, auth } = {}) {
+  const t0 = process.hrtime.bigint();
+  const ms = () => Math.max(1, Math.round(Number(process.hrtime.bigint() - t0) / 1e6));
+  try { const s = await connectViaProxy(proxyPort, host, port, { timeout, auth }); const v = ms(); s.destroy(); return { ms: v, kind: 'open' }; }
+  catch (e) { return /^Прокси отказал: HTTP\/1\.[01] (5\d\d|4\d\d)/.test(e.message) ? { ms: ms(), kind: 'refused' } : null; }
+}
+
 // Задержка до сайта через прокси: от запроса CONNECT до готового TLS-рукопожатия, мс.
-async function siteLatency({ proxyPort, host, port = 443, timeout = 8000, ca, auth }) {
+async function siteLatency({ proxyPort, host, port = 443, timeout = 8000, ca, auth, tlsHandshake = true }) {
   const t0 = process.hrtime.bigint();
   const sock = await connectViaProxy(proxyPort, host, port, { timeout, auth });
+  if (!tlsHandshake) { sock.destroy(); return Math.max(1, Math.round(Number(process.hrtime.bigint() - t0) / 1e6)); }   // порт не 443: меряем только соединение сквозь протокол
   await new Promise((resolve, reject) => {
     const t = tls.connect({ socket: sock, servername: host, ca, timeout }, () => { t.destroy(); resolve(); });
     t.once('error', reject);
@@ -137,4 +147,4 @@ function downloadVia({ proxyPort, host = 'speed.cloudflare.com', path = '/__down
   });
 }
 
-module.exports = { downloadVia, tcpPing, pingMedian, connectViaProxy, siteLatency, siteLatencyDirect, httpsGet, whatIsMyIp };
+module.exports = { probeVia, downloadVia, tcpPing, pingMedian, connectViaProxy, siteLatency, siteLatencyDirect, httpsGet, whatIsMyIp };

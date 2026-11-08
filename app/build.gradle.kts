@@ -20,5 +20,11 @@ android {
     packaging { jniLibs { useLegacyPackaging = true } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
+    // Одна и та же подпись у каждой сборки: новая версия ставится поверх старой без удаления (настройки и серверы остаются)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("../quasar-release.keystore"); storePassword = "quasar123"; keyAlias = "quasar"; keyPassword = "quasar123"
+        }
+    }
     buildTypes { release { isMinifyEnabled = false } }
 }

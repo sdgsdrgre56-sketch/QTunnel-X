@@ -138,7 +138,7 @@ function createApp({ dataDir, appDir = __dirname, token, core, pollMs = 1000, sy
         const direct = chain.includes('direct');
         const lan = /lan-in/.test(m.type || '') || ((m.type || '').startsWith('mixed') && m.sourceIP && !/^(127\.|::1)/.test(m.sourceIP));
         e = { seq: ++connSeq, id: x.id, at: Date.now(), host: m.host || m.destinationIP || '', ip: m.destinationIP || '', port: Number(m.destinationPort) || 0, net: String(m.network || 'tcp').toLowerCase(),
-          inb: lan ? 'приставка' : /tun/i.test(m.type || '') ? 'весь компьютер (TUN)' : 'прокси', src: baseName(m.processPath) || (m.sourceIP ? m.sourceIP + (m.sourcePort ? ':' + m.sourcePort : '') : ''),
+          proc: baseName(m.processPath) || '', inb: lan ? 'приставка' : /tun/i.test(m.type || '') ? 'весь компьютер (TUN)' : 'прокси', src: baseName(m.processPath) || (m.sourceIP ? m.sourceIP + (m.sourcePort ? ':' + m.sourcePort : '') : ''),
           out: direct ? 'direct' : 'proxy', route: chain.join(' → '), why: whyRoute(x), up: 0, down: 0, open: true, closedAt: 0 };
         connLive.set(x.id, e); connLog.push(e);
       }
@@ -217,7 +217,40 @@ function createApp({ dataDir, appDir = __dirname, token, core, pollMs = 1000, sy
       for (const i of list) { store.removeServer(i); pings.delete(i); }
       return stateView();
     },
-    'POST /api/ping': async ({ ids, mode }) => {
+    // Что сейчас открыто и идёт через туннель: по программам (на ПК в режиме TUN видно имя процесса), у каждой — самый «тяжёлый» адрес
+    'GET /api/games': async () => {
+      if (!kore.state.running) return { running: false, apps: [] };
+      const priv = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|198\.18\.|fe80|::1)/i;
+      const by = new Map();
+      for (const e of connLive.values()) {
+        if (e.out !== 'proxy' || !e.ip || priv.test(e.ip)) continue;
+        const key = e.proc || 'программа (имя не видно)';
+        const g = by.get(key) || { app: key, bytes: 0, dst: new Map() };
+        const b = e.up + e.down; g.bytes += b;
+        const k = e.net + '|' + e.ip + '|' + e.port, d = g.dst.get(k) || { net: e.net, ip: e.ip, port: e.port, host: e.host, bytes: 0 };
+        d.bytes += b; g.dst.set(k, d); by.set(key, g);
+      }
+      const apps = [...by.values()].map((g) => {
+        const all = [...g.dst.values()].sort((a, b) => b.bytes - a.bytes);
+        const udp = all.filter((d) => d.net === 'udp' && d.bytes > 2048);   // игровой поток — это обычно UDP с заметным трафиком
+        const t = udp[0] || all[0];
+        return { app: g.app, bytes: g.bytes, target: t, game: /fortnite|epic|valorant|riot|cs2|csgo|dota|apex|pubg|warzone|overwatch|minecraft|steam/i.test(g.app) };
+      }).sort((a, b) => (b.game - a.game) || (b.bytes - a.bytes)).slice(0, 8);
+      return { running: true, apps };
+    },
+    'POST /api/ping': async ({ ids, mode, site, game }) => {
+      let target = null, gtarget = null;
+      if (mode === 'game') {   // «Пинг до игры»: адрес, к которому игра подключена сейчас, сквозь каждый протокол
+        const ip = String((game && game.ip) || '').trim(), gp = Number(game && game.port) || 0;
+        if (!/^[0-9a-fA-F:.]{3,45}$/.test(ip)) throw new Error('Не выбрана игра: нажми «Найти игру», когда она запущена');
+        gtarget = { ip, host: String((game && game.host) || ip), port: gp, net: game && game.net === 'tcp' ? 'tcp' : 'udp', app: String((game && game.app) || '').slice(0, 60) };
+        mode = 'url';
+      }
+      if (mode === 'site') {   // «Пинг до сайта»: задержка до выбранного сайта сквозь каждый протокол
+        target = parseSite(site);
+        if (!target) throw new Error('Укажи сайт, например www.epicgames.com или host:порт');
+        mode = 'url';
+      }
       const list = (Array.isArray(ids) && ids.length ? ids.map((i) => store.server(i)).filter(Boolean) : store.data.servers);
       const deep = mode === 'deep'; if (deep) mode = 'url';
       const STEPS = mode === 'url' ? 1 : 3;   // TCP-пинг — три замера на профиль; шкала идёт по замерам, а не по профилям
@@ -230,8 +263,9 @@ function createApp({ dataDir, appDir = __dirname, token, core, pollMs = 1000, sy
           await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
             while (queue.length) {
               const s = queue.shift();
-              try { const v = await urlTest(s, { deep }); pings.set(s.id, typeof v === 'object' ? { ms: v.ms, kbps: v.kbps, at: Date.now(), mode: 'deep' } : { ms: v, at: Date.now(), mode: 'url' }); }
-              catch (e) { pings.set(s.id, { ms: null, at: Date.now(), mode: deep ? 'deep' : 'url', err: e.message }); }
+              const md = gtarget ? 'game' : target ? 'site' : deep ? 'deep' : 'url', sn = target ? target.host + (target.port !== 443 ? ':' + target.port : '') : undefined;
+              try { const v = await urlTest(s, { deep, site: target, game: gtarget }); pings.set(s.id, typeof v === 'object' ? (v.how ? { ms: v.ms, at: Date.now(), mode: 'game', how: v.how, site: gtarget.app || gtarget.ip } : { ms: v.ms, kbps: v.kbps, at: Date.now(), mode: 'deep' }) : { ms: v, at: Date.now(), mode: md, site: sn }); }
+              catch (e) { pings.set(s.id, { ms: null, at: Date.now(), mode: md, site: gtarget ? (gtarget.app || gtarget.ip) : sn, err: e.message }); }
               tick();
             }
           }));
@@ -685,22 +719,49 @@ function createApp({ dataDir, appDir = __dirname, token, core, pollMs = 1000, sy
   }
   const URL_HOST = 'www.gstatic.com';
   async function freePort() { return new Promise((res, rej) => { const sv = require('net').createServer(); sv.once('error', rej); sv.listen(0, '127.0.0.1', () => { const p = sv.address().port; sv.close(() => res(p)); }); }); }
-  async function measureVia(port, { tries = 2, timeout = 8000 } = {}) {   // первый замер прогревает соединение, берём лучший из двух
+  // Сайт для «Пинга до сайта»: host или host:port (схему и путь отбрасываем). Только имя/адрес — без пробелов и служебных символов.
+  function parseSite(raw) {
+    let t = String(raw || '').trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/[\/?#].*$/, '');
+    const m = /^([a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?)(?::(\d{1,5}))?$/.exec(t);
+    if (!m) return null;
+    const port = m[3] ? Number(m[3]) : 443;
+    if (port < 1 || port > 65535) return null;
+    return { host: m[1], port };
+  }
+  async function measureVia(port, { tries = 2, timeout = 8000, site = null } = {}) {   // первый замер прогревает соединение, берём лучший из двух
     let best = null, lastErr = null;
-    for (let i = 0; i < tries; i++) { try { const ms = await NET.siteLatency({ proxyPort: port, host: URL_HOST, timeout }); best = best === null ? ms : Math.min(best, ms); } catch (e) { lastErr = e; } }
+    const host = site ? site.host : URL_HOST, sport = site ? site.port : 443;
+    for (let i = 0; i < tries; i++) { try { const ms = await NET.siteLatency({ proxyPort: port, host, port: sport, timeout, tlsHandshake: sport === 443 }); best = best === null ? ms : Math.min(best, ms); } catch (e) { lastErr = e; } }
     if (best === null) throw new Error('через сервер не ответил' + (lastErr ? ': ' + lastErr.message : ''));
     return best;
   }
   // deep: кроме рукопожатия скачиваем 256 КБ — так видно, не «замораживает» ли провайдер поток после первых килобайт
-  async function viaCheck(port, deep) {
-    const ms = await measureVia(port);
+  // «Пинг до игры»: задержка до адреса, к которому игра подключена сейчас, сквозь протокол.
+  // 1) пробуем сам адрес игры (TCP открылся или отказал — это ответ). 2) Игры на UDP на TCP молчат: тогда меряем путь
+  // до самого сервера сквозь протокол — именно он у протоколов разный, а участок «сервер → игра» у всех одинаковый.
+  async function gameVia(port, item, g) {
+    const probe = deps.probeVia || NET.probeVia;
+    const tries = [...new Set([g.net === 'tcp' ? g.port : 0, 443, 80].filter(Boolean))];
+    for (const tp of tries) {
+      const a = await probe(port, g.ip || g.host, tp, { timeout: 2500 }), b = a && await probe(port, g.ip || g.host, tp, { timeout: 2500 });
+      if (a) return { ms: Math.min(a.ms, b ? b.ms : a.ms), how: 'game' };
+    }
+    for (const tp of [443, 22, 80]) {
+      const a = await probe(port, item.host, tp, { timeout: 3000 }), b = a && await probe(port, item.host, tp, { timeout: 3000 });
+      if (a) return { ms: Math.min(a.ms, b ? b.ms : a.ms), how: 'tunnel' };
+    }
+    throw new Error('через этот протокол ничего не ответило');
+  }
+  async function viaCheck(port, deep, site, game, item) {
+    if (game) return gameVia(port, item, game);
+    const ms = await measureVia(port, { site });
     if (!deep) return ms;
     const d = await (deps.downloadVia || NET.downloadVia)({ proxyPort: port });
     return { ms, kbps: d.kbps };
   }
-  async function urlTest(item, { deep = false } = {}) {
-    if (deps.urlTest) return deps.urlTest(item, { deep });
-    if (kore.state.running && kore.state.itemId === item.id) return viaCheck(kore.state.mixedPort, deep);
+  async function urlTest(item, { deep = false, site = null, game = null } = {}) {
+    if (deps.urlTest) return deps.urlTest(item, { deep, site, game });
+    if (kore.state.running && kore.state.itemId === item.id) return viaCheck(kore.state.mixedPort, deep, site, game, item);
     // Протоколы внешних ядер (Фотон, Mieru, Brook, Juicity, Naive, Snell…): запускаем своё временное ядро на свободном порту,
     // рядом — временный sing-box без TUN. Текущее подключение не трогается.
     const ad = COREREG.adapterFor(item);
@@ -712,7 +773,7 @@ function createApp({ dataDir, appDir = __dirname, token, core, pollMs = 1000, sy
       const external = tmpExt ? await tmpExt.start(item, (deps.adapter || ((a) => a))(ad)) : null;
       const mixedPort = await freePort(), apiPort = await freePort(), secret = crypto.randomBytes(8).toString('hex');
       await tmp.start(item.id, buildClientConfig(item, { mixedPort, apiPort, secret, adblock: false, tun: false, external }), { mixedPort, apiPort, secret });
-      return await viaCheck(mixedPort, deep);
+      return await viaCheck(mixedPort, deep, site, game, item);
     } catch (e) {
       // последние строки журнала внешнего ядра — по ним видно, почему протокол не работает
       const tail = extLog.filter((l) => /error|fail|warn|fatal|refused|timeout|EOF|denied|invalid|mismatch|not match|ошиб/i.test(l)).slice(-3).map((l) => l.slice(0, 220));

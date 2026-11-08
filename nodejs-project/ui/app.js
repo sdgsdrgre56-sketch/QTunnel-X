@@ -11,7 +11,7 @@
 
   const PREF = ['vless', 'hysteria2', 'tuic', 'anytls', 'trojan', 'shadowtls', 'shadowsocks', 'http', 'socks', 'naive', 'warp', 'shadowquic', 'sudoku', 'dnstt', 'photon', 'antohin', 'mieru', 'brook', 'juicity', 'restls', 'snell', 'tlsmirror'];
   const newRow = () => ({ name: '', host: '', port: '22', username: 'root', password: '', domain: '', portMode: 'default', basePort: '', realitySni: '', remember: true, warp: false, sent: false });
-  const S = { portIn: {}, portRes: {}, depOpen: {}, logPos: { conn: { top: 0, bottom: false } }, sort: { key: '', dir: 1 }, pingMode: (() => { try { return localStorage.getItem('pm') === 'url' ? 'url' : 'tcp'; } catch { return 'tcp'; } })(), sel: '', manual: null, view: 'list', st: null, tab: 'servers', ip: null, traffic: [], siteRes: null, busy: {}, rows: [newRow()], mineOpen: {}, multi: new Set(), anchor: '', cols: (() => { try { return JSON.parse(localStorage.getItem('cols') || '{}'); } catch { return {}; } })(), un: null, pingUntil: 0, conn: [], connClear: 0, connPause: false, connFilter: '', connOnly: 'all', importText: '', siteInput: '', open: {}, confirm: '', exportLink: '', exportNote: '', filter: 'all', coreForm: null, mask: {}, maintHide: '', rule: { kind: 'suffix', value: '', action: 'direct' } };
+  const S = { portIn: {}, portRes: {}, depOpen: {}, logPos: { conn: { top: 0, bottom: false } }, sort: { key: '', dir: 1 }, games: null, pingMode: (() => { try { return localStorage.getItem('pm') === 'url' ? 'url' : 'tcp'; } catch { return 'tcp'; } })(), sel: '', manual: null, view: 'list', st: null, tab: 'servers', ip: null, traffic: [], siteRes: null, busy: {}, rows: [newRow()], mineOpen: {}, multi: new Set(), anchor: '', cols: (() => { try { return JSON.parse(localStorage.getItem('cols') || '{}'); } catch { return {}; } })(), un: null, pingUntil: 0, conn: [], connClear: 0, connPause: false, connFilter: '', connOnly: 'all', importText: '', siteInput: '', open: {}, confirm: '', exportLink: '', exportNote: '', filter: 'all', coreForm: null, mask: {}, maintHide: '', rule: { kind: 'suffix', value: '', action: 'direct' } };
   const plural = (n, f) => n + ' ' + f[n % 10 === 1 && n % 100 !== 11 ? 0 : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 1 : 2];
 
   async function api(method, path, body) {
@@ -61,8 +61,8 @@
     return (i === 0 ? String(Math.round(n)) : n.toFixed(n >= 100 ? 0 : 1).replace('.', ',')) + ' ' + u[i];
   }
   const pingCls = (ms) => (ms === null || ms === undefined ? 'bad' : ms < 80 ? 'ok' : ms < 160 ? 'mid' : 'bad');
-  const pingTxt = (p) => (!p ? '—' : p.ms === null ? 'нет' : (p.tun ? '≈' : '') + p.ms + ' мс' + (p.mode === 'deep' && p.kbps ? ' · ' + (p.kbps >= 1024 ? (p.kbps / 1024).toFixed(1) + ' МБ/с' : p.kbps + ' КБ/с') : ''));
-  const pingTip = (p) => (!p ? 'Не замерено' : (p.mode === 'deep' ? 'Проверка скачиванием: рукопожатие и 256 КБ через сервер. Если здесь «нет», а URL-тест зелёный — провайдер замораживает поток этого протокола после первых килобайт' : p.mode === 'url' ? 'URL-тест: запрос до сайта через сервер' : p.tun ? 'TCP-пинг при включённом TUN идёт через сам туннель, поэтому цифра ненастоящая и «зелёная» даже у неработающего сервера. Проверяй «URL тестом» или выключи TUN' : 'TCP-пинг: время соединения с сервером') + (p.err ? ' — ' + p.err : ''));
+  const pingTxt = (p) => (!p ? '—' : p.ms === null ? 'нет' : (p.tun || p.how === 'tunnel' ? '≈' : '') + p.ms + ' мс' + (p.mode === 'deep' && p.kbps ? ' · ' + (p.kbps >= 1024 ? (p.kbps / 1024).toFixed(1) + ' МБ/с' : p.kbps + ' КБ/с') : ''));
+  const pingTip = (p) => (!p ? 'Не замерено' : (p.mode === 'deep' ? 'Проверка скачиванием: рукопожатие и 256 КБ через сервер. Если здесь «нет», а URL-тест зелёный — провайдер замораживает поток этого протокола после первых килобайт' : p.mode === 'game' ? (p.how === 'tunnel' ? 'Пинг до игры (' + (p.site || '') + '): игра работает по UDP и не отвечает на проверку, поэтому показан путь до сервера сквозь этот протокол, «≈». Участок «сервер → игра» у всех протоколов одного сервера одинаковый, так что сравнивать протоколы можно' : 'Пинг до игры (' + (p.site || '') + ') сквозь этот протокол') : p.mode === 'site' ? 'Пинг до сайта ' + (p.site || '') + ' сквозь этот протокол: реальная задержка, которую получишь в игре или на сайте. Это TCP/TLS, а не UDP игры, но разница между протоколами та же' : p.mode === 'url' ? 'URL-тест: запрос до сайта через сервер' : p.tun ? 'TCP-пинг при включённом TUN идёт через сам туннель, поэтому цифра ненастоящая и «зелёная» даже у неработающего сервера. Проверяй «URL тестом» или выключи TUN' : 'TCP-пинг: время соединения с сервером') + (p.err ? ' — ' + p.err : ''));
 
   // ---------- блоки ----------
   function renderStatus() {
@@ -447,6 +447,7 @@
         btn('+ Вручную', () => { S.manual = S.manual ? null : { proto: 'vless', f: {} }; render(); }),
         btn('Пинг всех', () => act('pingall', async () => { S.st = await api('POST', '/api/ping', { mode: S.pingMode }); S.sort = { key: 'ping', dir: 1 }; }), '', { title: 'Замерить все и отсортировать: быстрые сверху' }),
         btn('Пинг по URL', () => act('pingallurl', async () => { S.st = await api('POST', '/api/ping', { mode: 'url' }); S.sort = { key: 'ping', dir: 1 }; }), '', { title: 'Настоящая задержка до сайта сквозь каждый протокол: показывает, что протокол реально работает. Дольше, чем TCP' }),
+        btn('Найти игру', () => act('findgame', async () => { S.games = await api('GET', '/api/games'); }), '', { title: 'Запусти игру, подключись к матчу и нажми: Квазар найдёт, к какому адресу она сейчас подключена, и замерит задержку до него через каждый протокол. Нужно, чтобы Квазар был подключён' }),
         btn('Проверка скачиванием', () => act('pingalldeep', async () => { S.st = await api('POST', '/api/ping', { mode: 'deep' }); S.sort = { key: 'ping', dir: 1 }; }), '', { title: 'Через каждый протокол скачивается 256 КБ: видно, какие протоколы провайдер пропускает по-настоящему, а какие замораживает после первых килобайт' }),
         el('span', { class: 'seg', role: 'group', 'aria-label': 'Вид пинга', title: 'TCP — быстрый замер соединения с сервером. URL — настоящая задержка до сайта сквозь протокол (дольше, зато показывает, что протокол реально работает)' },
           ['tcp', 'url'].map((m) => el('button', { type: 'button', class: S.pingMode === m ? 'on' : '', 'aria-pressed': S.pingMode === m ? 'true' : 'false', onclick: () => { S.pingMode = m; try { localStorage.setItem('pm', m); } catch { /* не страшно */ } render(); } }, m === 'tcp' ? 'TCP пинг' : 'URL тест'))),
@@ -454,7 +455,7 @@
         el('span', { class: 'seg' },
           el('button', { type: 'button', class: view === 'list' ? 'on' : '', 'aria-pressed': view === 'list' ? 'true' : 'false', onclick: () => { S.view = 'list'; render(); } }, 'Списком'),
           el('button', { type: 'button', class: view === 'groups' ? 'on' : '', 'aria-pressed': view === 'groups' ? 'true' : 'false', onclick: () => { S.view = 'groups'; render(); } }, 'По серверам'))),
-      manualCard(), checkCard(st),
+      gamesCard(st), manualCard(), checkCard(st),
       el('div', { class: 'row' },
         groups.length ? btn('Все серверы — одна ссылка', () => act('exall', async () => { const r = await api('POST', '/api/export', {}); S.exportLink = r.link; S.exportNote = `${plural(r.hosts, ['сервер', 'сервера', 'серверов'])}, ${plural(r.count, ['протокол', 'протокола', 'протоколов'])}`; })) : null,
         null),
@@ -722,6 +723,22 @@
     return [el('div', { class: 'row' }, el('h1', { text: 'Журнал ядра' })), el('div', { class: 'log', text: S.st.core.logs.join('\n') || 'Пусто' })];
   }
 
+  // «Пинг до игры»: найденные программы с активным трафиком через туннель; кнопка замеряет задержку до их адреса сквозь каждый протокол
+  function gamesCard(st) {
+    const g = S.games;
+    if (!g) return null;
+    const fmt = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' МБ' : Math.max(1, Math.round(b / 1024)) + ' КБ');
+    if (!g.running) return el('div', { class: 'card muted' }, 'Квазар не подключён: подключись к любому протоколу, запусти игру и нажми «Найти игру» ещё раз.', btn('Закрыть', () => { S.games = null; render(); }, 'ghost'));
+    if (!g.apps.length) return el('div', { class: 'card muted' }, 'Пока ничего не идёт через туннель. Запусти игру, зайди в матч или лобби и нажми «Найти игру» ещё раз.', btn('Закрыть', () => { S.games = null; render(); }, 'ghost'));
+    return el('div', { class: 'card' },
+      el('div', { class: 'row' }, el('b', { text: 'Что сейчас идёт через туннель' }), el('span', { class: 'grow' }), btn('Закрыть', () => { S.games = null; render(); }, 'ghost')),
+      el('div', { class: 'muted', text: 'Выбери игру: Квазар замерит задержку до адреса, к которому она подключена, через каждый протокол. Результат появится в колонке пинга.' }),
+      g.apps.map((a) => el('div', { class: 'row' },
+        el('span', { class: 'cut', text: (a.game ? '🎮 ' : '') + a.app }),
+        el('span', { class: 'muted num', text: `${a.target.ip}:${a.target.port} · ${a.target.net.toUpperCase()} · ${fmt(a.bytes)}` }),
+        el('span', { class: 'grow' }),
+        btn('Пинг до неё', () => act('pg' + a.app, async () => { S.st = await api('POST', '/api/ping', { mode: 'game', game: { ...a.target, app: a.app } }); S.sort = { key: 'ping', dir: 1 }; }), 'primary', { title: 'Замерить задержку до этого адреса через каждый протокол' }))));
+  }
   // Шкала «пинг идёт»: 0–100%, чтобы было видно, что проверка не зависла
   function pingBar(st) {
     const p = st.pingProg || {};
